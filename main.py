@@ -19,7 +19,7 @@ class Config:
 
 class Trainer:
     model: Model
-    cfg: Cfg
+    cfg: Config
     train_data: torch.Tensor
     val_data: torch.Tensor
     optimizer: torch.optim.AdamW
@@ -42,11 +42,11 @@ class Trainer:
         x = torch.stack([data[i : i + self.cfg.block_size] for i in ix])
         y = torch.stack([data[i + 1 : i + self.cfg.block_size + 1] for i in ix])
 
-        return x, y
+        return x.to(self.cfg.device), y.to(self.cfg.device)
 
-    def train(self):
+    def train(self, epochs: int):
 
-        for steps in range(30000):
+        for epoch in range(epochs):
             xb, yb = self._get_batch("train")
 
             logits, loss = self.model(xb, yb)
@@ -54,8 +54,24 @@ class Trainer:
             loss.backward()
             self.optimizer.step()
 
-            if steps % 100 == 0:
+            if epoch % 100 == 0:
                 print(f"Loss: {loss.item()}")
+
+    @torch.no_grad()
+    def estimate_loss(self) -> dict:
+        out = {}
+        self.model.eval()
+
+        for split in ["train", "val"]:
+            losses = torch.zeros(self.cfg.eval_iters)
+
+            for k in range(self.cfg.eval_iters):
+                X, Y = self._get_batch(split)
+                _, loss = self.model(X, Y)
+                losses[k] = loss.item()
+            out[split] = losses.mean()
+        self.model.train()
+        return out
 
 
 def main():
@@ -66,11 +82,13 @@ def main():
 
     torch.manual_seed(1337)
     cfg: Config = Config(vocab_size=len(tok.vocab))
-    m = Model(vocab_size=cfg.vocab_size)
+    m = Model(vocab_size=cfg.vocab_size).to(cfg.device)
 
     trainer: Trainer = Trainer(m, cfg, train, val)
-    trainer.train()
+    trainer.train(3000)
 
+    idx = torch.zeros((1, 1), dtype=torch.long, device=cfg.device)
+    print(tok._decode(m.generate(idx, max_new_tokens=300)[0].tolist()))
     return
 
 
